@@ -1,5 +1,6 @@
 /*
-    Copyright © 1995-2001, The AROS Development Team. All rights reserved.
+    Copyright © 1995-2006, The AROS Development Team. All rights reserved.
+    Copyright © 2006, Stefan "Bebbo" Franke
 */
 
 #define PROTOTYPES
