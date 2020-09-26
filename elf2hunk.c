@@ -634,7 +634,6 @@ int sym_dump(int hunk_fd, struct sheader *sh, struct hunkheader **hh, int shid, 
 		return 1;
 
 	wlong(hunk_fd, HUNK_SYMBOL);
-	wlong(hunk_fd, syms);
 
 	/* Dump symbols for this hunk */
 	for (i = 0; i < syms; i++) {
@@ -649,6 +648,9 @@ int sym_dump(int hunk_fd, struct sheader *sh, struct hunkheader **hh, int shid, 
 			continue;
 
 		name = (const char*) (hh[symtab->link]->data + s.name);
+		if (!*name)
+			continue;
+
 		D(bug("\t0x%08x: %s\n", (int)s.value, name));
 		lsize = (strlen(name) + 4) / 4;
 		wlong(hunk_fd, lsize);
@@ -686,7 +688,7 @@ static void reloc_dump(int hunk_fd, struct hunkheader **hh, int h) {
 		/* Convert from ELF hunk ID to AOS hunk ID */
 		wlong(hunk_fd, hh[shid]->hunk);
 		for (; count > 0; i++, count--) {
-			D(bug("\t\t%d: 0x%08x %s\n", i, (int)hh[h]->reloc[i].offset, hh[h]->reloc[i].symbol));
+//    	    D(bug("\t\t%d: 0x%08x %s\n", i, (int)hh[h]->reloc[i].offset, hh[h]->reloc[i].symbol));
 			wlong(hunk_fd, hh[h]->reloc[i].offset);
 		}
 	}
@@ -721,10 +723,10 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 	struct elfheader eh;
 	struct sheader *sh;
 	char *strtab = 0;
+	char *secstrtab = 0;
 	int symtab_shndx = -1;
 	int err;
 	ULONG i;
-	BOOL exec_hunk_seen = FALSE;
 	ULONG int_shnum;
 	int hunks = 0;
 
@@ -757,14 +759,17 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 	 */
 	hh = (struct hunkheader**) calloc(sizeof(*hh), int_shnum);
 
-	/* Look for the string table */
+	/* Look for the string table - use the last one*/
 	D(bug("Look for string table\n"));
 	for (i = 0; i < int_shnum; i++) {
 		if (sh[i].type == SHT_STRTAB) {
-			strtab = (char*) load_block(file, sh[i].offset, sh[i].size);
-			break;
+			secstrtab = (char*) load_block(file, sh[i].offset, sh[i].size);
+			if (strtab == 0)
+				strtab = secstrtab;
 		}
 	}
+	D(bug("Got string table %p\n", strtab));
+	D(bug("Got section string table %p\n", secstrtab));
 
 	/* Iterate over the section headers in order to do some stuff... */
 	D(bug("Look for symbol tables\n"));
@@ -786,6 +791,7 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 			if (!hh[i]->data)
 				goto error;
 
+			D(bug("Got symbols in %d : %d\n", i, sh[i].type));
 			if (sh[i].type == SHT_SYMTAB_SHNDX) {
 				if (symtab_shndx == -1)
 					symtab_shndx = i;
@@ -794,7 +800,7 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 			}
 		} else
 		/* Load the section in memory if needed, and make an hunk out of it */
-		if (sh[i].flags & SHF_ALLOC && sh[i].size > 0) {
+		if ((sh[i].flags & SHF_ALLOC) && sh[i].size > 0) {
 			hh[i] = (struct hunkheader*) calloc(sizeof(struct hunkheader), 1);
 			hh[i]->size = sh[i].size;
 			hh[i]->hunk = hunks++;
@@ -813,18 +819,17 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 			} else {
 				if (sh[i].flags & SHF_EXECINSTR) {
 					hh[i]->type = HUNK_CODE;
-					exec_hunk_seen = TRUE;
 				} else {
 					hh[i]->type = HUNK_DATA;
 				}
 				hh[i]->data = (char*) load_block(file, sh[i].offset, sh[i].size);
 			}
 
-			if (strtab) {
+			if (secstrtab) {
 				const char *nameext;
 
-				D(bug("section %s\n", strtab + sh[i].name));
-				nameext = strrchr(strtab + sh[i].name, '.');
+				D(bug("section %s\n", secstrtab + sh[i].name));
+				nameext = strrchr(secstrtab + sh[i].name, '.');
 				if (nameext) {
 					if (strcmp(nameext, ".MEMF_CHIP") == 0) {
 						hh[i]->memflags |= MEMF_CHIP;
@@ -912,7 +917,7 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 		switch (hh[i]->type) {
 		case HUNK_BSS:
 			D(bug("HUNK_BSS: %d longs\n", (int)((hh[i]->size + 3) / 4)));
-			if (0) {
+			if (secstrtab != strtab) {
 				for (s = 0; s < int_shnum; s++) {
 					if (hh[s] && hh[s]->type == HUNK_SYMBOL)
 						sym_dump(hunk_fd, sh, hh, i, s);
@@ -927,7 +932,7 @@ int elf2hunk(int file, int hunk_fd, const char *libname, int flags) {
 			err = write(hunk_fd, hh[i]->data, ((hh[i]->size + 3) / 4) * 4);
 			if (err < 0)
 				return EXIT_FAILURE;
-			if (0) {
+			if (secstrtab != strtab) {
 				for (s = 0; s < int_shnum; s++) {
 					if (hh[s] && hh[s]->type == HUNK_SYMBOL)
 						sym_dump(hunk_fd, sh, hh, i, s);
