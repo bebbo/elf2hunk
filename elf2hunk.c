@@ -547,8 +547,8 @@ static int relocate(struct elfheader *eh, struct sheader *sh, ULONG shrel_idx, i
 		case SHN_UNDEF:
 			if (ELF_R_TYPE(rel->info) != 0) {
 				bug("[ELF2HUNK] SHN_UNDEF symbol '%s', type %d unsupported\n", symname, ELF_R_TYPE(rel->info));
-				set_error(EINVAL);
-				return 0;
+//				set_error(EINVAL);
+//				return 0;
 			}
 			break;
 
